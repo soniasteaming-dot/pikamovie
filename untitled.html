@@ -1,0 +1,170 @@
+import logging
+from telegram import (
+    Update, InlineKeyboardButton, InlineKeyboardMarkup,
+    InlineQueryResultArticle, InputTextMessageContent
+)
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    InlineQueryHandler, CallbackQueryHandler,
+    ContextTypes, filters
+)
+import uuid
+
+# ==================== CONFIGURATION ====================
+BOT_TOKEN = "7904856939:AAG2gLMQABESqwjyXoMNaoRlDfO9CWKTD7A"
+CHANNEL_USERNAME = "@pikamoviepro"
+
+# ==================== LOGGER ====================
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# ==================== DATABASE ====================
+# Court / preloaded movie list
+movie_db = {
+    "pushpa 2": {"poster": None, "category": "South"},
+    "jawan": {"poster": None, "category": "Bollywood"},
+    "animal": {"poster": None, "category": "Bollywood"},
+    "pathaan": {"poster": None, "category": "Bollywood"},
+    "salaar": {"poster": None, "category": "South"},
+    "kgf 2": {"poster": None, "category": "South"}
+}
+
+categories = ["Bollywood", "Hollywood", "South", "Web Series", "Anime"]
+
+# ==================== AUTO DATABASE BUILDER ====================
+async def build_database(context: ContextTypes.DEFAULT_TYPE):
+    try:
+        async for message in context.bot.get_chat_history(CHANNEL_USERNAME, limit=300):
+            if message.text:
+                movie_name = message.text.split("\n")[0]
+                if movie_name.lower( ) not in movie_db:
+                    movie_db[movie_name.lower( )] = {
+                        "poster": message.photo[-1].file_id if message.photo else None,
+                        "category": "Uncategorized"
+                    }
+    except Exception as e:
+        logger.error(f"Database Error: {e}")
+
+# ==================== START COMMAND ====================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("🔥 Trending", callback_data="trending"),
+         InlineKeyboardButton("🎞 Categories", callback_data="categories")],
+        [InlineKeyboardButton("🔍 Search Movie", switch_inline_query_current_chat="")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "🎬 *Welcome to PikaMovieBot Pro MAX* 🍿\n\n"
+        "📌 Search movies, get posters, and download instantly 🚀",
+        parse_mode="Markdown",
+        reply_markup=reply_markup
+    )
+
+# ==================== MOVIE SEARCH ====================
+async def search_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.message.text.strip( ).lower( )
+    if not query:
+        await update.message.reply_text("⚠️ Please enter a movie name.")
+        return
+    matches = [m for m in movie_db if query in m]
+    if matches:
+        for movie in matches[:10]:
+            poster = movie_db[movie]["poster"]
+            movie_link = f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}?q={movie.replace(' ', '+')}"
+            keyboard = [[InlineKeyboardButton("🎥 Download Movie", url=movie_link)]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            if poster:
+                await update.message.reply_photo(
+                    photo=poster,
+                    caption=f"🎬 *{movie.title( )}*\n\n🔗 [Download Here]({movie_link})",
+                    parse_mode="Markdown",
+                    reply_markup=reply_markup
+                )
+            else:
+                await update.message.reply_text(
+                    f"🎬 *{movie.title()}*\n\n🔗 [Download Here]({movie_link})",
+                    parse_mode="Markdown",
+                    reply_markup=reply_markup
+                )
+    else:
+        await update.message.reply_text(f"❌ No results for *{query}*.", parse_mode="Markdown")
+
+# ==================== INLINE SEARCH ====================
+async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.inline_query.query.strip( ).lower( )
+    results = [ ]
+    matches = [m for m in movie_db if query in m][:15]
+    for movie in matches:
+        movie_link = f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}?q={movie.replace(' ', '+')}"
+        results.append(
+            InlineQueryResultArticle(
+                id=uuid.uuid4( ),
+                title=movie.title( ),
+                description="Click to get movie link",
+                input_message_content=InputTextMessageContent(
+                    message_text=f"🎬 *{movie.title()}*\n\n🔗 [Download Here]({movie_link})",
+                    parse_mode="Markdown"
+                ),
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🎥 Download Movie", url=movie_link)]]
+                )
+            )
+        )
+    await update.inline_query.answer(results, cache_time=1)
+
+# ==================== CATEGORIES ====================
+async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [[InlineKeyboardButton(cat, callback_data=f"cat_{cat}")] for cat in categories]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.callback_query.message.reply_text(
+        "📂 *Select a Category:*",
+        parse_mode="Markdown",
+        reply_markup=reply_markup
+    )
+
+async def category_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cat = update.callback_query.data.split("_")[1]
+    movies = [m for m in movie_db if movie_db[m]["category"] == cat]
+    if not movies:
+        await update.callback_query.message.reply_text(f"⚠️ No movies in *{cat}* yet.", parse_mode="Markdown")
+        return
+    keyboard = [[InlineKeyboardButton(movie.title( ), url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}?q={movie.replace(' ', '+')}")] for movie in movies[:15]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.callback_query.message.reply_text(
+        f"🎞 *Movies in {cat}:*",
+        parse_mode="Markdown",
+        reply_markup=reply_markup
+    )
+
+# ==================== TRENDING MOVIES ====================
+async def trending_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    trending = ["Pushpa 2", "Jawan", "Animal", "Pathaan", "Salaar", "KGF 2"]
+    keyboard = [[InlineKeyboardButton(f"🎬 {movie}", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}?q={movie.replace(' ', '+')}")] for movie in trending]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.callback_query.message.reply_text(
+        "🔥 *Trending Movies:*",
+        parse_mode="Markdown",
+        reply_markup=reply_markup
+    )
+
+# ==================== MAIN ====================
+def main( ):
+    app = ApplicationBuilder( ).token(BOT_TOKEN).build( )
+    app.job_queue.run_once(build_database, when=2)
+
+    # Handlers
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(trending_movies, pattern="trending"))
+    app.add_handler(CallbackQueryHandler(show_categories, pattern="categories"))
+    app.add_handler(CallbackQueryHandler(category_movies, pattern="cat_"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_movie))
+    app.add_handler(InlineQueryHandler(inline_search))
+
+    print("🚀 PikaMovieBot Public Version is running...")
+    app.run_polling( )
+
+if __name__ == "__main__":
+    main( )
